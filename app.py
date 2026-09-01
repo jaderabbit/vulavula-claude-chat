@@ -23,6 +23,20 @@ TRANSLATE_TGT = "eng_Latn"
 anthropic_client = Anthropic()
 CLAUDE_MODEL = "claude-opus-4-7"
 
+# Vulavula returns transcripts unpunctuated and lowercased ("sawubona ngicela
+# ungitshele ngezilimi zaseningizimu afrika"). Restoring sentence punctuation and
+# casing before translation gives the translator sentence boundaries to work with.
+# Set PUNCTUATE_TRANSCRIPT=0 to skip the step (saves a round trip).
+PUNCTUATE_TRANSCRIPT = os.environ.get("PUNCTUATE_TRANSCRIPT", "1").lower() not in (
+    "0", "false", "off", "no",
+)
+PUNCTUATE_MODEL = os.environ.get("PUNCTUATE_MODEL", "claude-opus-5")
+# output_config.effort exists on the 4.6+ family only; older models (e.g.
+# claude-haiku-4-5) reject it with a 400, so only send it where it applies.
+_EFFORT_MODELS = ("claude-opus-5", "claude-opus-4-8", "claude-opus-4-7",
+                  "claude-opus-4-6", "claude-sonnet-5", "claude-sonnet-4-6",
+                  "claude-fable-5")
+
 # ---------------------------------------------------------------------------
 # Text-to-speech (isiZulu) — OmniVoice over HTTP
 # ---------------------------------------------------------------------------
@@ -108,6 +122,56 @@ def transcribe(audio_bytes: bytes, filename: str, mimetype: str) -> str:
             if isinstance(first, dict) and "transcription" in first:
                 return first["transcription"]
     return str(data)
+
+
+PUNCTUATE_SYSTEM = (
+    "You restore punctuation and capitalisation in isiZulu speech transcripts.\n"
+    "Rules:\n"
+    "- Keep every word exactly as given. Do not translate, correct spelling, "
+    "reword, add words, or remove words.\n"
+    "- Only add or fix punctuation (. , ? !) and letter case, including "
+    "capitalising proper nouns and the isiZulu noun-prefix pattern (e.g. "
+    "'ningizimu afrika' -> 'iNingizimu Afrika').\n"
+    "- Output only the corrected transcript, with no preamble, quotes or "
+    "explanation."
+)
+
+
+def punctuate(text_zulu: str) -> str:
+    """Restore punctuation/casing on a raw isiZulu transcript.
+
+    Best-effort: any failure, or output that has drifted too far from the input,
+    falls back to the original text so the pipeline is never blocked by it.
+    """
+    if not PUNCTUATE_TRANSCRIPT or not text_zulu.strip():
+        return text_zulu
+    try:
+        kwargs = {}
+        if PUNCTUATE_MODEL in _EFFORT_MODELS:
+            # Punctuation needs no deliberation; low effort keeps latency down.
+            kwargs["output_config"] = {"effort": "low"}
+        msg = anthropic_client.messages.create(
+            model=PUNCTUATE_MODEL,
+            max_tokens=1024,
+            system=PUNCTUATE_SYSTEM,
+            messages=[{"role": "user", "content": text_zulu}],
+            **kwargs,
+        )
+        out = "".join(
+            b.text for b in msg.content if getattr(b, "type", None) == "text"
+        ).strip()
+        # Guard against the model paraphrasing or commenting instead of
+        # punctuating: the word count should barely move.
+        n_in, n_out = len(text_zulu.split()), len(out.split())
+        if not out or not (0.7 <= n_out / max(n_in, 1) <= 1.4):
+            app.logger.warning(
+                "punctuate: rejected output (%d words in, %d out)", n_in, n_out
+            )
+            return text_zulu
+        return out
+    except Exception:
+        app.logger.exception("punctuate failed (using raw transcript)")
+        return text_zulu
 
 
 def translate(text: str, source: str, target: str) -> str:
@@ -338,6 +402,8 @@ def voice():
         zulu_text = transcribe(audio_bytes, f.filename or "audio.webm", f.mimetype or "audio/webm")
         if not zulu_text.strip():
             return jsonify({"error": "empty transcription", "stage": stage, "zulu_in": zulu_text}), 422
+        stage = "punctuate"
+        zulu_text = punctuate(zulu_text)
         stage = "translate_in"
         english_in = translate(zulu_text, TRANSLATE_SRC, TRANSLATE_TGT)
         stage = "claude"

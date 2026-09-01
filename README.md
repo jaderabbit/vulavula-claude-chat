@@ -2,7 +2,7 @@
 
 A voice chat with Claude in **isiZulu**, powered by [Lelapa AI's Vulavula](https://lelapa.ai) for transcription and translation, and [OmniVoice](https://huggingface.co/spaces/k2-fsa/OmniVoice) for speech.
 
-Speak isiZulu in the browser → Vulavula transcribes → Vulavula translates to English → Claude replies → Vulavula translates back to isiZulu → OmniVoice speaks it. Multi-turn, chat-style UI.
+Speak isiZulu in the browser → Vulavula transcribes → Claude restores punctuation/casing → Vulavula translates to English → Claude replies → Vulavula translates back to isiZulu → OmniVoice speaks it. Multi-turn, chat-style UI.
 
 ## Run locally
 
@@ -26,6 +26,8 @@ Only the two tokens are required; everything else has a working default.
 | `VULAVULA_API_TOKEN` | — | **Required.** Vulavula transcribe + translate. |
 | `ANTHROPIC_API_KEY` | — | **Required.** Needs a funded account, or the pipeline fails at `stage: "claude"`. |
 | `PORT` | `5050` | |
+| `PUNCTUATE_TRANSCRIPT` | `1` | Restore punctuation + casing on the raw transcript before translating. `0` skips it and saves a round trip. |
+| `PUNCTUATE_MODEL` | `claude-opus-5` | Model for that pass. `claude-haiku-4-5` is ~2s faster per turn with near-identical results. |
 | `TTS_BACKEND` | `omnivoice` | `off` disables speech; the pipeline still returns text. |
 | `OMNIVOICE_SPACE_URL` | `https://k2-fsa-omnivoice.hf.space` | The public Space cold-starts and queues (first call can take ~a minute). Point this at your own duplicated always-on Space for a live demo. |
 | `OMNIVOICE_MODE` | `design` | `design` = text + language only. `clone` reproduces a reference voice and needs `OMNIVOICE_REF_AUDIO` + `OMNIVOICE_REF_TEXT`. |
