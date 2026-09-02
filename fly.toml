@@ -8,6 +8,11 @@ primary_region = 'jnb'
 
 [build]
 
+[env]
+  # Lelapa's own private OmniVoice Space (ZeroGPU). Private, so requests need
+  # OMNIVOICE_TOKEN — set as a Fly secret, not here.
+  OMNIVOICE_SPACE_URL = "https://lelapa-omnivoice.hf.space"
+
 [http_service]
   internal_port = 8080
   force_https = true

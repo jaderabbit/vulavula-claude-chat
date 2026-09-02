@@ -31,7 +31,7 @@ Only the two tokens are required; everything else has a working default.
 | `PUNCTUATE_TRANSCRIPT` | `1` | Restore punctuation + casing on the raw transcript before translating. `0` skips it and saves a round trip. |
 | `PUNCTUATE_MODEL` | `claude-haiku-4-5` | Model for that pass. Haiku is ~2s faster per turn than `claude-opus-5`, with near-identical results. |
 | `TTS_BACKEND` | `omnivoice` | `off` disables speech; the pipeline still returns text. |
-| `OMNIVOICE_SPACE_URL` | `https://k2-fsa-omnivoice.hf.space` | The public Space cold-starts and queues (first call can take ~a minute). Point this at your own duplicated always-on Space for a live demo. |
+| `OMNIVOICE_SPACE_URL` | `https://k2-fsa-omnivoice.hf.space` (production uses Lelapa's private Space, set in `fly.toml`) | The public Space cold-starts and queues (first call can take ~a minute). Point this at your own duplicated always-on Space for a live demo. |
 | `OMNIVOICE_MODE` | `design` | `design` = text + language only. `clone` reproduces a reference voice and needs `OMNIVOICE_REF_AUDIO` + `OMNIVOICE_REF_TEXT`. |
 | `OMNIVOICE_API_NAME` | from mode | `_design_fn` or `_clone_fn`. |
 | `OMNIVOICE_LANG` | `Zulu` | Must match the Space's dropdown label exactly. |
