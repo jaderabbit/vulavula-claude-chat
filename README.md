@@ -26,6 +26,8 @@ Only the two tokens are required; everything else has a working default.
 | `VULAVULA_API_TOKEN` | — | **Required.** Vulavula transcribe + translate. |
 | `ANTHROPIC_API_KEY` | — | **Required.** Needs a funded account, or the pipeline fails at `stage: "claude"`. |
 | `PORT` | `5050` | |
+| `APP_PASSWORD` | empty | Set it to require HTTP Basic auth on every route. Empty (the local default) leaves the app open. |
+| `APP_USERNAME` | `lelapa` | Username for that Basic auth prompt. |
 | `PUNCTUATE_TRANSCRIPT` | `1` | Restore punctuation + casing on the raw transcript before translating. `0` skips it and saves a round trip. |
 | `PUNCTUATE_MODEL` | `claude-haiku-4-5` | Model for that pass. Haiku is ~2s faster per turn than `claude-opus-5`, with near-identical results. |
 | `TTS_BACKEND` | `omnivoice` | `off` disables speech; the pipeline still returns text. |
@@ -37,6 +39,8 @@ Only the two tokens are required; everything else has a working default.
 | `OMNIVOICE_TIMEOUT` | `180` | Seconds to wait out a cold or queued Space. |
 | `OMNIVOICE_STEPS` / `_CFG` / `_SPEED` | `32` / `2.0` / `1.0` | Generation knobs. |
 | `OMNIVOICE_REF_AUDIO` / `_REF_TEXT` / `_INSTRUCT` | empty | Voice-clone mode only. |
+
+`/api/voice` returns a `timings_ms` object with per-stage wall-clock (`ffmpeg`, `stt_http`, `transcribe`, `punctuate`, `translate_in`, `claude`, `translate_out`, `tts`, `total`), and logs the same line server-side — use it to see where a slow turn went.
 
 TTS failures degrade gracefully: `/api/voice` returns `audio_out: null`, the bubble shows an "audio unavailable" note, and the reply still appears as text. If that note keeps appearing, check the server log — an exhausted ZeroGPU quota is the usual cause, and `OMNIVOICE_TOKEN` is the fix. See `TTS_NOTES.md` for how the Gradio queue protocol is called.
 

@@ -3,10 +3,11 @@ import io
 import json
 import time
 import base64
+import hmac
 import subprocess
 import traceback
 import requests
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, Response, request, jsonify, send_from_directory
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
@@ -88,6 +89,35 @@ OMNIVOICE_TIMEOUT = int(os.environ.get("OMNIVOICE_TIMEOUT", "180"))
 
 app = Flask(__name__, static_folder=None)
 
+# ---------------------------------------------------------------------------
+# Basic auth (optional)
+# ---------------------------------------------------------------------------
+# Set APP_PASSWORD to require HTTP Basic auth on every route. Unset (the local
+# default) leaves the app open, so `python app.py` needs no extra setup.
+APP_USERNAME = os.environ.get("APP_USERNAME", "lelapa")
+APP_PASSWORD = os.environ.get("APP_PASSWORD", "")
+
+
+@app.before_request
+def require_basic_auth():
+    if not APP_PASSWORD:
+        return None
+    auth = request.authorization
+    ok = (
+        auth is not None
+        and auth.type == "basic"
+        and hmac.compare_digest(auth.username or "", APP_USERNAME)
+        and hmac.compare_digest(auth.password or "", APP_PASSWORD)
+    )
+    if ok:
+        return None
+    return Response(
+        "Authentication required.",
+        401,
+        {"WWW-Authenticate": 'Basic realm="isiZulu voice chat"'},
+    )
+
+
 
 def to_wav(audio_bytes: bytes) -> bytes:
     """Convert any browser-recorded audio (webm/opus, ogg, mp4) to 16 kHz mono WAV via ffmpeg."""
@@ -101,8 +131,13 @@ def to_wav(audio_bytes: bytes) -> bytes:
     return proc.stdout
 
 
-def transcribe(audio_bytes: bytes, filename: str, mimetype: str) -> str:
+def transcribe(audio_bytes: bytes, filename: str, mimetype: str, timings: dict = None) -> str:
+    """Transcribe isiZulu audio. If `timings` is given, record ffmpeg vs HTTP ms."""
+    t = time.perf_counter()
     wav_bytes = to_wav(audio_bytes)
+    if timings is not None:
+        timings["ffmpeg"] = round((time.perf_counter() - t) * 1000)
+    t = time.perf_counter()
     r = requests.post(
         f"{VULAVULA_BASE}/transcribe/sync",
         headers=VULAVULA_HEADERS,
@@ -110,6 +145,8 @@ def transcribe(audio_bytes: bytes, filename: str, mimetype: str) -> str:
         files={"file": ("speech.wav", io.BytesIO(wav_bytes), "audio/wav")},
         timeout=120,
     )
+    if timings is not None:
+        timings["stt_http"] = round((time.perf_counter() - t) * 1000)
     if not r.ok:
         raise RuntimeError(f"vulavula transcribe {r.status_code}: {r.text}")
     data = r.json()
@@ -398,20 +435,40 @@ def voice():
     except json.JSONDecodeError:
         history = []
     stage = "transcribe"
+    timings = {}
+    t_total = time.perf_counter()
     try:
-        zulu_text = transcribe(audio_bytes, f.filename or "audio.webm", f.mimetype or "audio/webm")
+        t = time.perf_counter()
+        zulu_text = transcribe(
+            audio_bytes, f.filename or "audio.webm", f.mimetype or "audio/webm", timings
+        )
+        timings["transcribe"] = round((time.perf_counter() - t) * 1000)
         if not zulu_text.strip():
             return jsonify({"error": "empty transcription", "stage": stage, "zulu_in": zulu_text}), 422
         stage = "punctuate"
+        t = time.perf_counter()
         zulu_text = punctuate(zulu_text)
+        timings["punctuate"] = round((time.perf_counter() - t) * 1000)
         stage = "translate_in"
+        t = time.perf_counter()
         english_in = translate(zulu_text, TRANSLATE_SRC, TRANSLATE_TGT)
+        timings["translate_in"] = round((time.perf_counter() - t) * 1000)
         stage = "claude"
+        t = time.perf_counter()
         english_out = ask_claude(history, english_in)
+        timings["claude"] = round((time.perf_counter() - t) * 1000)
         stage = "translate_out"
+        t = time.perf_counter()
         zulu_out = translate(english_out, TRANSLATE_TGT, TRANSLATE_SRC)
+        timings["translate_out"] = round((time.perf_counter() - t) * 1000)
         stage = "tts"
+        t = time.perf_counter()
         audio_out = synthesize_data_uri(zulu_out)
+        timings["tts"] = round((time.perf_counter() - t) * 1000)
+        timings["total"] = round((time.perf_counter() - t_total) * 1000)
+        app.logger.info(
+            "voice ok: %s", " ".join(f"{k}={v}ms" for k, v in timings.items())
+        )
     except Exception as e:
         app.logger.exception("voice pipeline failed at stage=%s", stage)
         return jsonify({
@@ -426,6 +483,7 @@ def voice():
         "english_out": english_out,
         "zulu_out": zulu_out,
         "audio_out": audio_out,  # base64 data URI of the spoken isiZulu reply, or null
+        "timings_ms": timings,   # per-stage wall-clock, for profiling
     })
 
 
