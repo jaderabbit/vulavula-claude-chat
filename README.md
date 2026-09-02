@@ -2,7 +2,7 @@
 
 A voice chat with Claude in **isiZulu**, powered by [Lelapa AI's Vulavula](https://lelapa.ai) for transcription and translation, and [OmniVoice](https://huggingface.co/spaces/k2-fsa/OmniVoice) for speech.
 
-Speak isiZulu in the browser → Vulavula transcribes → Claude restores punctuation/casing → Vulavula translates to English → Claude replies → Vulavula translates back to isiZulu → OmniVoice speaks it. Multi-turn, chat-style UI.
+Speak isiZulu in the browser → Vulavula transcribes → Claude cleans the transcript into written isiZulu → Vulavula translates to English → Claude replies → Vulavula translates back to isiZulu → OmniVoice speaks it. Multi-turn, chat-style UI.
 
 ## Run locally
 
@@ -28,8 +28,9 @@ Only the two tokens are required; everything else has a working default.
 | `PORT` | `5050` | |
 | `APP_PASSWORD` | empty | Set it to require HTTP Basic auth on every route. Empty (the local default) leaves the app open. |
 | `APP_USERNAME` | `lelapa` | Username for that Basic auth prompt. |
-| `PUNCTUATE_TRANSCRIPT` | `1` | Restore punctuation + casing on the raw transcript before translating. `0` skips it and saves a round trip. |
-| `PUNCTUATE_MODEL` | `claude-haiku-4-5` | Model for that pass. Haiku is ~2s faster per turn than `claude-opus-5`, with near-identical results. |
+| `CLEAN_TRANSCRIPT` | `1` | Clean the raw transcript into well-formed written isiZulu (conjunctive word joins, noun prefixes/concords, punctuation, casing) before translating. `0` skips it and saves a round trip. Old name `PUNCTUATE_TRANSCRIPT` still works. |
+| `CLEAN_MODEL` | `claude-haiku-4-5` | Model for that pass (~1s). `claude-sonnet-5` matches it on clear speech and guesses less on garbled audio, but adds 1-9s per turn. Old name `PUNCTUATE_MODEL` still works. |
+| `CLEAN_MIN_SIMILARITY` | `0.55` | Drift guard: cleaned text below this character-level similarity to the raw transcript is rejected and the raw text used. |
 | `TTS_BACKEND` | `omnivoice` | `off` disables speech; the pipeline still returns text. |
 | `OMNIVOICE_SPACE_URL` | `https://k2-fsa-omnivoice.hf.space` (production uses Lelapa's private Space, set in `fly.toml`) | The public Space cold-starts and queues (first call can take ~a minute). Point this at your own duplicated always-on Space for a live demo. |
 | `OMNIVOICE_MODE` | `design` | `design` = text + language only. `clone` reproduces a reference voice and needs `OMNIVOICE_REF_AUDIO` + `OMNIVOICE_REF_TEXT`. |
@@ -40,7 +41,7 @@ Only the two tokens are required; everything else has a working default.
 | `OMNIVOICE_STEPS` / `_CFG` / `_SPEED` | `32` / `2.0` / `1.0` | Generation knobs. |
 | `OMNIVOICE_REF_AUDIO` / `_REF_TEXT` / `_INSTRUCT` | empty | Voice-clone mode only. |
 
-`/api/voice` returns a `timings_ms` object with per-stage wall-clock (`ffmpeg`, `stt_http`, `transcribe`, `punctuate`, `translate_in`, `claude`, `translate_out`, `tts`, `total`), and logs the same line server-side — use it to see where a slow turn went.
+`/api/voice` returns a `timings_ms` object with per-stage wall-clock (`ffmpeg`, `stt_http`, `transcribe`, `clean`, `translate_in`, `claude`, `translate_out`, `tts`, `total`), and logs the same line server-side — use it to see where a slow turn went.
 
 TTS failures degrade gracefully: `/api/voice` returns `audio_out: null`, the bubble shows an "audio unavailable" note, and the reply still appears as text. If that note keeps appearing, check the server log — an exhausted ZeroGPU quota is the usual cause, and `OMNIVOICE_TOKEN` is the fix. See `TTS_NOTES.md` for how the Gradio queue protocol is called.
 

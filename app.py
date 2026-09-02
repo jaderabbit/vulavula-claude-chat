@@ -1,6 +1,8 @@
 import os
 import io
+import re
 import json
+import difflib
 import time
 import base64
 import hmac
@@ -24,14 +26,26 @@ TRANSLATE_TGT = "eng_Latn"
 anthropic_client = Anthropic()
 CLAUDE_MODEL = "claude-opus-4-7"
 
-# Vulavula returns transcripts unpunctuated and lowercased ("sawubona ngicela
-# ungitshele ngezilimi zaseningizimu afrika"). Restoring sentence punctuation and
-# casing before translation gives the translator sentence boundaries to work with.
-# Set PUNCTUATE_TRANSCRIPT=0 to skip the step (saves a round trip).
-PUNCTUATE_TRANSCRIPT = os.environ.get("PUNCTUATE_TRANSCRIPT", "1").lower() not in (
-    "0", "false", "off", "no",
+# Vulavula returns transcripts unpunctuated, lowercased and word-by-word
+# ("sawubona ngicela ungitshele ngezilimi zase ningizimu afrika"). isiZulu is
+# written conjunctively, so an ASR transcript needs more than punctuation before
+# it reads as isiZulu: morphemes that belong to one word get split, prefixes get
+# dropped, and homophones land on the wrong spelling. This pass hands the raw
+# transcript to Claude to fix orthography (word joins/splits, noun prefixes,
+# concords) and restore punctuation/casing, without changing what was said.
+# Better-formed isiZulu also translates better, so this feeds translate_in.
+# Set CLEAN_TRANSCRIPT=0 to skip the step (saves a round trip).
+# PUNCTUATE_* are the previous names for these two, still honoured.
+CLEAN_TRANSCRIPT = os.environ.get(
+    "CLEAN_TRANSCRIPT", os.environ.get("PUNCTUATE_TRANSCRIPT", "1")
+).lower() not in ("0", "false", "off", "no")
+CLEAN_MODEL = os.environ.get(
+    "CLEAN_MODEL", os.environ.get("PUNCTUATE_MODEL", "claude-haiku-4-5")
 )
-PUNCTUATE_MODEL = os.environ.get("PUNCTUATE_MODEL", "claude-haiku-4-5")
+# How far the cleaned text may drift from the raw transcript before we reject it
+# and fall back (see clean_transcript). Joining split morphemes shortens the word
+# count noticeably, so the floor is well below 1.
+CLEAN_MIN_SIMILARITY = float(os.environ.get("CLEAN_MIN_SIMILARITY", "0.55"))
 # output_config.effort exists on the 4.6+ family only; older models (e.g.
 # claude-haiku-4-5) reject it with a 400, so only send it where it applies.
 _EFFORT_MODELS = ("claude-opus-5", "claude-opus-4-8", "claude-opus-4-7",
@@ -161,53 +175,82 @@ def transcribe(audio_bytes: bytes, filename: str, mimetype: str, timings: dict =
     return str(data)
 
 
-PUNCTUATE_SYSTEM = (
-    "You restore punctuation and capitalisation in isiZulu speech transcripts.\n"
-    "Rules:\n"
-    "- Keep every word exactly as given. Do not translate, correct spelling, "
-    "reword, add words, or remove words.\n"
-    "- Only add or fix punctuation (. , ? !) and letter case, including "
-    "capitalising proper nouns and the isiZulu noun-prefix pattern (e.g. "
-    "'ningizimu afrika' -> 'iNingizimu Afrika').\n"
-    "- Output only the corrected transcript, with no preamble, quotes or "
-    "explanation."
+CLEAN_SYSTEM = (
+    "You clean up raw isiZulu speech-recognition transcripts so they read as "
+    "correctly written isiZulu. The text comes from an ASR model: it is "
+    "lowercased, unpunctuated, and often written disjunctively or with "
+    "misheard morphemes.\n"
+    "Do:\n"
+    "- Restore isiZulu conjunctive orthography: join morphemes that belong to "
+    "one word ('zase ningizimu afrika' -> 'zaseNingizimu Afrika', 'ngi cela' -> "
+    "'ngicela') and split anything wrongly run together.\n"
+    "- Fix spelling, noun-class prefixes and subject/object concords where the "
+    "ASR clearly mangled them, and restore dropped initial vowels.\n"
+    "- Add punctuation (. , ? !) and capitalisation, including proper nouns and "
+    "the isiZulu prefix pattern ('iNingizimu Afrika', 'isiZulu').\n"
+    "Do not:\n"
+    "- Translate, answer, comment, or add or remove any content. Every word the "
+    "speaker said must survive in some form; do not invent words to fill gaps.\n"
+    "- Rephrase, reorder or 'improve' the wording, or standardise English "
+    "loanwords and code-switching that the speaker actually used.\n"
+    "- Guess. Where the transcript is too garbled to tell what was said, leave "
+    "that stretch exactly as it is. A leftover ASR error is much better than a "
+    "fluent word the speaker never said, because the next step translates this "
+    "text and a wrong guess silently changes the meaning.\n"
+    "Output only the cleaned transcript: no preamble, quotes or explanation."
 )
 
 
-def punctuate(text_zulu: str) -> str:
-    """Restore punctuation/casing on a raw isiZulu transcript.
+def _similarity(a: str, b: str) -> float:
+    """Rough character-level similarity, ignoring case, punctuation and spacing.
+
+    Word joins and prefix fixes barely move this; a translation or a chatty
+    'Here is the corrected text:' preamble moves it a lot.
+    """
+    norm = lambda t: re.sub(r"[^a-z0-9]+", "", t.lower())
+    return difflib.SequenceMatcher(None, norm(a), norm(b)).ratio()
+
+
+def clean_transcript(text_zulu: str) -> str:
+    """Turn a raw isiZulu ASR transcript into well-formed written isiZulu.
 
     Best-effort: any failure, or output that has drifted too far from the input,
     falls back to the original text so the pipeline is never blocked by it.
     """
-    if not PUNCTUATE_TRANSCRIPT or not text_zulu.strip():
+    if not CLEAN_TRANSCRIPT or not text_zulu.strip():
         return text_zulu
     try:
         kwargs = {}
-        if PUNCTUATE_MODEL in _EFFORT_MODELS:
-            # Punctuation needs no deliberation; low effort keeps latency down.
+        if CLEAN_MODEL in _EFFORT_MODELS:
+            # Orthography needs no deliberation; low effort keeps latency down.
             kwargs["output_config"] = {"effort": "low"}
         msg = anthropic_client.messages.create(
-            model=PUNCTUATE_MODEL,
+            model=CLEAN_MODEL,
             max_tokens=1024,
-            system=PUNCTUATE_SYSTEM,
+            system=CLEAN_SYSTEM,
             messages=[{"role": "user", "content": text_zulu}],
             **kwargs,
         )
         out = "".join(
             b.text for b in msg.content if getattr(b, "type", None) == "text"
         ).strip()
-        # Guard against the model paraphrasing or commenting instead of
-        # punctuating: the word count should barely move.
+        if not out:
+            return text_zulu
+        # Guard against the model translating, answering or commenting instead
+        # of cleaning: word count may drop as morphemes are joined, but the
+        # letters themselves should stay largely the same.
         n_in, n_out = len(text_zulu.split()), len(out.split())
-        if not out or not (0.7 <= n_out / max(n_in, 1) <= 1.4):
+        ratio = n_out / max(n_in, 1)
+        sim = _similarity(text_zulu, out)
+        if not (0.5 <= ratio <= 1.3) or sim < CLEAN_MIN_SIMILARITY:
             app.logger.warning(
-                "punctuate: rejected output (%d words in, %d out)", n_in, n_out
+                "clean_transcript: rejected output (%d words in, %d out, "
+                "similarity %.2f)", n_in, n_out, sim,
             )
             return text_zulu
         return out
     except Exception:
-        app.logger.exception("punctuate failed (using raw transcript)")
+        app.logger.exception("clean_transcript failed (using raw transcript)")
         return text_zulu
 
 
@@ -450,10 +493,11 @@ def voice():
         timings["transcribe"] = round((time.perf_counter() - t) * 1000)
         if not zulu_text.strip():
             return jsonify({"error": "empty transcription", "stage": stage, "zulu_in": zulu_text}), 422
-        stage = "punctuate"
+        zulu_raw = zulu_text
+        stage = "clean"
         t = time.perf_counter()
-        zulu_text = punctuate(zulu_text)
-        timings["punctuate"] = round((time.perf_counter() - t) * 1000)
+        zulu_text = clean_transcript(zulu_text)
+        timings["clean"] = round((time.perf_counter() - t) * 1000)
         stage = "translate_in"
         t = time.perf_counter()
         english_in = translate(zulu_text, TRANSLATE_SRC, TRANSLATE_TGT)
@@ -484,6 +528,7 @@ def voice():
         }), 500
     return jsonify({
         "zulu_in": zulu_text,
+        "zulu_raw": zulu_raw,     # transcript as Vulavula returned it, pre-cleanup
         "english_in": english_in,
         "english_out": english_out,
         "zulu_out": zulu_out,
