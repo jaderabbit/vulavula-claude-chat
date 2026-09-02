@@ -30,7 +30,7 @@ CLAUDE_MODEL = "claude-opus-4-7"
 PUNCTUATE_TRANSCRIPT = os.environ.get("PUNCTUATE_TRANSCRIPT", "1").lower() not in (
     "0", "false", "off", "no",
 )
-PUNCTUATE_MODEL = os.environ.get("PUNCTUATE_MODEL", "claude-opus-5")
+PUNCTUATE_MODEL = os.environ.get("PUNCTUATE_MODEL", "claude-haiku-4-5")
 # output_config.effort exists on the 4.6+ family only; older models (e.g.
 # claude-haiku-4-5) reject it with a 400, so only send it where it applies.
 _EFFORT_MODELS = ("claude-opus-5", "claude-opus-4-8", "claude-opus-4-7",

@@ -27,7 +27,7 @@ Only the two tokens are required; everything else has a working default.
 | `ANTHROPIC_API_KEY` | — | **Required.** Needs a funded account, or the pipeline fails at `stage: "claude"`. |
 | `PORT` | `5050` | |
 | `PUNCTUATE_TRANSCRIPT` | `1` | Restore punctuation + casing on the raw transcript before translating. `0` skips it and saves a round trip. |
-| `PUNCTUATE_MODEL` | `claude-opus-5` | Model for that pass. `claude-haiku-4-5` is ~2s faster per turn with near-identical results. |
+| `PUNCTUATE_MODEL` | `claude-haiku-4-5` | Model for that pass. Haiku is ~2s faster per turn than `claude-opus-5`, with near-identical results. |
 | `TTS_BACKEND` | `omnivoice` | `off` disables speech; the pipeline still returns text. |
 | `OMNIVOICE_SPACE_URL` | `https://k2-fsa-omnivoice.hf.space` | The public Space cold-starts and queues (first call can take ~a minute). Point this at your own duplicated always-on Space for a live demo. |
 | `OMNIVOICE_MODE` | `design` | `design` = text + language only. `clone` reproduces a reference voice and needs `OMNIVOICE_REF_AUDIO` + `OMNIVOICE_REF_TEXT`. |
@@ -51,7 +51,7 @@ fly deploy
 ```
 
 The Dockerfile installs `ffmpeg` and serves the app with gunicorn on port 8080.
-`fly.toml` is set to `auto_stop_machines = "stop"` so it scales to zero when idle.
+`fly.toml` sets `min_machines_running = 1` so one machine stays warm and demos don't pay a cold start. Set it back to `0` (with `auto_stop_machines = "stop"`) to scale to zero when idle.
 No model runs on the VM — TTS is an outbound HTTP call — so it still fits a 512 MB machine.
 
 ## Pieces
