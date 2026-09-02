@@ -234,11 +234,13 @@ def ask_claude(history: list, prompt_english: str) -> str:
         model=CLAUDE_MODEL,
         system=(
             "You are a helpful assistant in a voice chat. The user is speaking isiZulu; "
-            "their message has been translated to English. Reply in 1-2 short sentences. "
-            "Brevity matters: every word is translated and then spoken aloud, so a long "
-            "answer makes the user wait. Write naturally — everyday vocabulary is fine, "
-            "and English terms that come through as isiZulu loanwords are welcome. Do not "
-            "use lists, headings or markdown. Keep the conversation natural."
+            "their message has been translated to English. Reply in at most 25 words — "
+            "one or two short sentences. Brevity matters: every word is translated and "
+            "then spoken aloud, so a long answer makes the user wait. Answer the question "
+            "directly and stop; do not list examples exhaustively. Write naturally — "
+            "everyday vocabulary is fine, and English terms that come through as isiZulu "
+            "loanwords are welcome. Do not use lists, headings or markdown. Keep the "
+            "conversation natural."
         ),
         max_tokens=300,
         messages=messages,
