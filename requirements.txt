@@ -2,3 +2,5 @@ flask>=3.0
 requests>=2.31
 anthropic>=0.40
 python-dotenv>=1.0
+# isiZulu TTS is done by calling the OmniVoice Gradio Space over HTTP
+# (TTS_BACKEND=omnivoice) — no local model, so `requests` above is all we need.
